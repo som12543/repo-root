@@ -142,7 +142,7 @@ jobs:
 
 
   ######################################################################
-  # 5) PUBLISH TO NEXUS
+  # 5) PUBLISH TO NEXUS  ✅ FIXED ✅
   ######################################################################
   publish:
     name: Publish to Nexus
@@ -161,10 +161,15 @@ jobs:
           NEXUS_USER: ${{ secrets.NEXUS_USER }}
           NEXUS_PASS: ${{ secrets.NEXUS_PASS }}
         run: |
+          # Remove trailing slash if present
+          CLEAN_URL="${NEXUS_URL%/}"
+
+          # Pick the artifact
           ART=$(ls artifact_upload/*.tgz)
           FILE_NAME=$(basename "$ART")
 
-          DEST="${NEXUS_URL}/repository/${{ env.ARTIFACT_REPO }}/${{ env.APP_NAME }}/build-${{ github.run_number }}-${{ github.sha }}"
+          # Nexus destination path
+          DEST="$CLEAN_URL/repository/${{ env.ARTIFACT_REPO }}/${{ env.APP_NAME }}/build-${{ github.run_number }}-${{ github.sha }}"
 
           echo "Uploading to -> $DEST/$FILE_NAME"
 
