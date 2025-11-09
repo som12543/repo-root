@@ -58,7 +58,7 @@ jobs:
   ######################################################################
   build:
     name: Compile COBOL & Package Artifact
-    runs-on: [ self-hosted, cobol-runner ]
+    runs-on: [ self-hosted ]
     needs: [ cobol_security ]
 
     outputs:
