@@ -1,0 +1,186 @@
+name: APP-CI-Enterprise
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  APP_NAME: app1
+  ARTIFACT_REPO: cobol-releases
+  ARTIFACT_PREFIX: "${{ env.APP_NAME }}"
+  BUILD_TIMESTAMP: ${{ github.run_started_at }}
+
+jobs:
+
+  ######################################################################
+  # 1) GITLEAKS – SECRET SCANNING
+  ######################################################################
+  gitleaks:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Gitleaks
+        uses: zricethezav/gitleaks-action@v2
+        with:
+          args: detect --no-banner --verbose --redact
+        continue-on-error: false
+
+
+  ######################################################################
+  # 2) COBOL SECURITY CHECK AGENT
+  ######################################################################
+  cobol_security:
+    name: COBOL Security Scanner
+    runs-on: ubuntu-latest
+    needs: [ gitleaks ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run COBOL Security Check
+        run: |
+          echo "Running COBOL Security Agent..."
+          chmod +x tools/cobol-security-agent.sh
+          tools/cobol-security-agent.sh apps/${{ env.APP_NAME }} || exit 1
+
+
+  ######################################################################
+  # 3) BUILD (SELF-HOSTED RUNNER)
+  ######################################################################
+  build:
+    name: Compile COBOL & Package Artifact
+    runs-on: [ self-hosted, cobol-runner ]
+    needs: [ cobol_security ]
+
+    outputs:
+      artifact-path: ${{ steps.package.outputs.artifact-path }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare scripts
+        run: |
+          chmod +x apps/${{ env.APP_NAME }}/build.sh
+          chmod +x apps/${{ env.APP_NAME }}/test.sh
+
+      - name: Compile COBOL
+        working-directory: ./apps/${{ env.APP_NAME }}
+        run: ./build.sh
+
+      - name: Run Unit Tests
+        working-directory: ./apps/${{ env.APP_NAME }}
+        run: ./test.sh
+
+      - name: Package artifact
+        id: package
+        working-directory: ./apps/${{ env.APP_NAME }}
+        run: |
+          ART="../${{ env.ARTIFACT_PREFIX }}-${{ github.run_number }}-${{ github.sha }}.tgz"
+          tar czf "$ART" out || tar czf "$ART" *
+          sha256sum "$ART" > "${ART}.sha256"
+          echo "artifact-path=$ART" >> $GITHUB_OUTPUT
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: ${{ steps.package.outputs.artifact-path }}
+
+
+  ######################################################################
+  # 4) SBOM + TRIVY
+  ######################################################################
+  sbom_scan:
+    name: SBOM & Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: [ build ]
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+          path: ./artifact_download
+
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
+
+      - name: Create SBOM
+        run: |
+          mkdir -p sbom
+          syft ./artifact_download -o json > sbom/${{ env.ARTIFACT_PREFIX }}-sbom.json
+
+      - name: Install trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+
+      - name: Scan with Trivy
+        run: |
+          mkdir -p trivy-reports
+          trivy fs --security-checks vuln --format json \
+            --output trivy-reports/${{ env.ARTIFACT_PREFIX }}-trivy.json \
+            ./artifact_download || true
+
+      - name: Upload SBOM & Scan Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-and-scan
+          path: |
+            sbom/
+            trivy-reports/
+
+
+  ######################################################################
+  # 5) PUBLISH TO NEXUS  ✅ FIXED ✅
+  ######################################################################
+  publish:
+    name: Publish to Nexus
+    runs-on: ubuntu-latest
+    needs: [ sbom_scan ]
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+          path: artifact_upload
+
+      - name: Upload to Nexus
+        env:
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASS: ${{ secrets.NEXUS_PASS }}
+        run: |
+          ART=$(ls artifact_upload/*.tgz)
+          FILE_NAME=$(basename "$ART")
+
+          DEST="${NEXUS_URL}/repository/${{ env.ARTIFACT_REPO }}/${{ env.APP_NAME }}/build-${{ github.run_number }}-${{ github.sha }}"
+
+          echo "Uploading to -> $DEST/$FILE_NAME"
+
+          curl -v -u "${NEXUS_USER}:${NEXUS_PASS}" \
+            --upload-file "$ART" \
+            "$DEST/$FILE_NAME"
+
+
+  ######################################################################
+  # 6) FINAL SUMMARY
+  ######################################################################
+  finalize:
+    name: Finalize
+    runs-on: ubuntu-latest
+    needs: [ publish ]
+
+    steps:
+      - name: Summary
+        run: |
+          echo "✅ Enterprise COBOL CI completed for ${{ env.APP_NAME }}"
