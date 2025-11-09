@@ -13,7 +13,7 @@ concurrency:
 env:
   APP_NAME: app1
   ARTIFACT_REPO: cobol-releases
-  ARTIFACT_PREFIX: "${{ env.APP_NAME }}"
+  ARTIFACT_PREFIX: app1
   BUILD_TIMESTAMP: ${{ github.run_started_at }}
 
 jobs:
