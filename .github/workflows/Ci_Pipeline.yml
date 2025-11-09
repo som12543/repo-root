@@ -57,45 +57,45 @@ jobs:
   # 3) BUILD (SELF-HOSTED RUNNER)
   ######################################################################
   build:
-   name: Compile COBOL & Package Artifact
-   runs-on: [ self-hosted ]
-   needs: [ cobol_security ]
+    name: Compile COBOL & Package Artifact
+    runs-on: [ self-hosted ]
+    needs: [ cobol_security ]
 
-   outputs:
-    artifact-path: ${{ steps.package.outputs.artifact-path }}
+    outputs:
+      artifact-path: ${{ steps.package.outputs.artifact-path }}
 
-   steps:
-    - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-    - name: Prepare scripts
-      run: |
-        chmod +x apps/${{ env.APP_NAME }}/build.sh
-        chmod +x apps/${{ env.APP_NAME }}/test.sh
+      - name: Prepare scripts
+        run: |
+          chmod +x apps/${{ env.APP_NAME }}/build.sh
+          chmod +x apps/${{ env.APP_NAME }}/test.sh
 
-    - name: Compile COBOL
-      working-directory: ./apps/${{ env.APP_NAME }}
-      run: ./build.sh
+      - name: Compile COBOL
+        working-directory: ./apps/${{ env.APP_NAME }}
+        run: ./build.sh
 
-    - name: Run Unit Tests
-      working-directory: ./apps/${{ env.APP_NAME }}
-      run: ./test.sh
+      - name: Run Unit Tests
+        working-directory: ./apps/${{ env.APP_NAME }}
+        run: ./test.sh
 
-    - name: Package artifact
-      id: package
-      working-directory: ./apps/${{ env.APP_NAME }}
-      run: |
-        mkdir -p build
-        ART="build/${{ env.ARTIFACT_PREFIX }}-${{ github.run_number }}-${{ github.sha }}.tgz"
-        tar czf "$ART" out || tar czf "$ART" *
+      - name: Package artifact
+        id: package
+        working-directory: ./apps/${{ env.APP_NAME }}
+        run: |
+          mkdir -p build
+          ART="${{ github.workspace }}/apps/${{ env.APP_NAME }}/build/${{ env.ARTIFACT_PREFIX }}-${{ github.run_number }}-${{ github.sha }}.tgz"
+          tar czf "$ART" out || tar czf "$ART" *
+          sha256sum "$ART" > "${ART}.sha256"
+          echo "artifact-path=$ART" >> $GITHUB_OUTPUT
 
-        sha256sum "$ART" > "${ART}.sha256"
-        echo "artifact-path=$ART" >> $GITHUB_OUTPUT
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: apps/${{ env.APP_NAME }}/build/
 
-    - name: Upload Build Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-artifact
-        path: ${{ steps.package.outputs.artifact-path }}
 
   ######################################################################
   # 4) SBOM + TRIVY
@@ -142,7 +142,7 @@ jobs:
 
 
   ######################################################################
-  # 5) PUBLISH TO NEXUS  ✅ FIXED ✅
+  # 5) PUBLISH TO NEXUS
   ######################################################################
   publish:
     name: Publish to Nexus
