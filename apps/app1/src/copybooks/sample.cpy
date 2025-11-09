@@ -1,0 +1,2 @@
+01 CPY-NUMBER       PIC 9(4).
+01 CPY-NAME         PIC X(20).
